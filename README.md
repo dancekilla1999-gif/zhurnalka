@@ -2,20 +2,29 @@
 
 Санитарные журналы общепита в телефоне
 
-Кабинет (приложение): https://zhurnalka.vercel.app/app/
+Кабинет: https://zhurnalka.vercel.app/app/
 
-Маркетинговая страница: https://zhurnalka.vercel.app
+Лендинг: https://zhurnalka.vercel.app
 
 Часть пакета **Трио** (https://trio-resto.vercel.app)
+
+## Статус восстановления (31.10.2026)
+
+- `app/index.html` — восстановлен с production Vercel
+- Полный исходный код (все JS/CSS/fonts/media) лежит в архиве `zhurnalka-full.zip`
+- Чтобы получить полный рабочий проект — распакуй zip в корень репозитория и сделай commit
 
 ## Структура
 
 ```
-index.html      — лендинг сервиса
-app/            — кабинет (SPA на hash-роутинге)
+index.html      — лендинг
+app/            — кабинет (SPA)
   index.html
-  *.js, *.css
+  core.js, data.js, forms.js, print.js, owner.js, staff.js, team.js, agents-ui.js, guide.js, trio-bill.js
+  app.css, trio-skin.css, agents.css
 fonts/
+css/
+media/
 ```
 
 ## Локальный запуск
@@ -26,4 +35,3 @@ npx serve .
 ```
 
 Backend: Supabase (`qozyihhlocvgpkchyqsp.supabase.co`).
-Оплата: API на trio-resto.
