@@ -1,2 +1,29 @@
-# zhurnalka
-Журналка — санитарные журналы общепита в телефоне | Трио
+# Журналка
+
+Санитарные журналы общепита в телефоне
+
+Кабинет (приложение): https://zhurnalka.vercel.app/app/
+
+Маркетинговая страница: https://zhurnalka.vercel.app
+
+Часть пакета **Трио** (https://trio-resto.vercel.app)
+
+## Структура
+
+```
+index.html      — лендинг сервиса
+app/            — кабинет (SPA на hash-роутинге)
+  index.html
+  *.js, *.css
+fonts/
+```
+
+## Локальный запуск
+
+```bash
+npx serve .
+# кабинет: http://localhost:3000/app/
+```
+
+Backend: Supabase (`qozyihhlocvgpkchyqsp.supabase.co`).
+Оплата: API на trio-resto.
