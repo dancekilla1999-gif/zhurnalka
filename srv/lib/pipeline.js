@@ -2,6 +2,8 @@
 const { rpc } = require('./sb');
 const { tgSend, moscowDay } = require('./common');
 const A = require('./agents');
+const K = require('./keeper');
+const ai = require('./ai');
 
 function dbFor(who) {
   return { op: (op, args) => who.token ? rpc('zh_agent', { p_token: who.token, p_op: op, p_args: args || {} })
@@ -12,8 +14,16 @@ function save(db, r) { return r ? db.op('insight_save', { agent: r.agent, pkey: 
 // day — вчерашний день; неделя считается по воскресеньям (или по запросу)
 async function runAll(db, opts = {}) {
   const day = opts.day || moscowDay(-1);
+  const weekly = opts.week === true || (opts.week !== false && A.dow(day) === 0);
+  let watch = null, promo = null;
+  try { watch = await K.watch(); } catch (e) { console.error('keeper', e.message); }
+  if (weekly) { try { promo = await K.promo('zhurnalka', ai); } catch (e) { console.error('promo', e.message); } }
+  await Promise.all([save(db, watch), promo ? save(db, promo) : null]);
   const ctx = await db.op('ctx', { days: 40 });
-  if (!(ctx.points || []).length) return { empty: true };
+  if (!(ctx.points || []).length) {
+    if (opts.chatId && watch && watch.level === 'bad') await tgSend(opts.chatId, '<b>Смотритель</b>\n' + watch.items.filter((i) => i.level === 'bad').map((i) => '🔴 ' + i.text).join('\n')).catch(() => false);
+    return { empty: true, watch, promo };
+  }
   const today = ctx.today || moscowDay(0);
   const san = A.sanitary(ctx, day), med = A.medbook(ctx, today);
   await Promise.all([save(db, san), save(db, med)]);
@@ -29,8 +39,9 @@ async function runAll(db, opts = {}) {
   let sent = false;
   if (opts.chatId) {
     sent = await tgSend(opts.chatId, A.tgDaily(san, med, opts.base ? opts.base + '/app/#/o/agents' : null)).catch(() => false);
-    if (week) await tgSend(opts.chatId, A.tgWeekly(week.chef, week.inspection, opts.base ? opts.base + '/app/#/o/agents' : null)).catch(() => false);
+    if (week) await tgSend(opts.chatId, A.tgWeekly(week.chef, week.inspection, opts.base ? opts.base + '/app/#/o/agents' : null) + (promo ? '\n\n<b>Продвижение:</b> черновик поста лежит в кабинете. Сам агент его не публикует.' : '')).catch(() => false);
+    if (watch && watch.level === 'bad') await tgSend(opts.chatId, '<b>Смотритель</b>\n' + watch.items.filter((i) => i.level === 'bad').map((i) => '🔴 ' + i.text).join('\n')).catch(() => false);
   }
-  return { sanitary: san, medbook: med, week, sent };
+  return { sanitary: san, medbook: med, week, sent, watch, promo };
 }
 module.exports = { dbFor, runAll, save };

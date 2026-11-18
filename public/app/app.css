@@ -1,10 +1,16 @@
 /* «Журналка» — санитарные журналы в телефоне. Палитра: чистый белый, глубокий синий, бирюза «санитарной» плитки. */
 :root {
+  --bg: #0C1522; --surface: #132033; --ink: #E6EDF5; --muted: #A2B1C3; --line: #263852;
+  --accent: #37C2A8; --accent-strong: #5FD8C0; --green: #0E6D5D; --on-green: #FFFFFF;
+  --good: #4CC48A; --bad: #F2857A; --warn-bg: #2C2612; --warn-line: #5E4F1E; --bad-bg: #351B1A; --good-bg: #12302A;
+  --display: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --body: "Golos Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
   --bg: #F3F6F8; --surface: #FFFFFF; --ink: #13233A; --muted: #55657A; --line: #D2DAE3;
   --accent: #0B7A68; --accent-strong: #08604F; --green: #0B7A68; --on-green: #FFFFFF;
   --good: #1B7A47; --bad: #B42318; --warn-bg: #FFF5DB; --warn-line: #E9CF86; --bad-bg: #FDECEA; --good-bg: #E7F5EE;
-  --display: "Manrope", "Segoe UI", system-ui, sans-serif;
-  --body: "Golos Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
