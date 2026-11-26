@@ -70,6 +70,6 @@ jobs:
           node-version: 22
       - run: npm install
       - name: tests with tap reporter
-        run: node --test --test-concurrency=1 | tee test-out.txt
+        run: set -o pipefail; node --test --test-concurrency=1 | tee test-out.txt
       - name: no skipped tests
-        run: grep -q '# skipped 0' test-out.txt
+        run: grep -q '# skipped 0' test-out.txt && ! grep -q '# fail [1-9]' test-out.txt
