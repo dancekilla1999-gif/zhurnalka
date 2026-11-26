@@ -1,0 +1,10 @@
+{
+  "name": "zhurnalka",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-concurrency=1 --test-reporter spec"
+  },
+  "devDependencies": {
+    "pg": "^8.16.3"
+  }
+}

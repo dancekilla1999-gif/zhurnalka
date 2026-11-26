@@ -222,6 +222,10 @@ ul.lines li:last-child { border-bottom: 0; padding-bottom: 0; }
   .stickers { grid-template-columns: repeat(3, 1fr); }
   .sticker { border-color: #999; }
 }
+.table-box { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.net-banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); background: var(--warn-bg); color: var(--ink); border: 1px solid var(--warn-line); border-radius: 999px; padding: 8px 14px; z-index: 70; }
 [hidden] { display: none !important; }
 @media (max-width: 720px) {
   .topbar-in .small.muted { display: none; }
