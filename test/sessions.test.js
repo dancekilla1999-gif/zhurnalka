@@ -367,19 +367,136 @@ test('лимит неверных кодов и /auth по IP', async () => {
   assert.equal(blocked.statusCode, 429);
 });
 
-test('миграция localStorage-токена меняет его на cookie', async () => {
-  const legacy = await h.rpc('zh_login', { p_email: 'egor@example.com', p_password: 'password-ok' }, { role: 'anon' });
-  assert.equal(legacy.error, 'Неверная почта или пароль');
+test('migrate принимает только legacy, access и tg отклоняет', async () => {
   const acc = await h.register('egor@example.com', 'password-ok');
-  const old = await h.rpc('zh_login', { p_email: 'egor@example.com', p_password: 'password-ok' }, { role: 'anon' });
-  assert.ok(old.token);
-  assert.equal(old.refresh, undefined);
-  const moved = await h.call('authMigrate', { body: { token: old.token } });
+  const access = await h.rpc('zh_login', { p_email: 'egor@example.com', p_password: 'password-ok' }, { role: 'anon' });
+  assert.ok(access.token);
+  const deniedAccess = await h.call('authMigrate', { body: { token: access.token } });
+  assert.equal(deniedAccess.statusCode, 403);
+  assert.equal(deniedAccess.json.hint, 'forbidden');
+  const tg = await h.call('tgLogin', {
+    body: { initData: h.signedInit({ userId: 81 }), email: 'egor@example.com', password: 'password-ok', consent: true, device_id: 'phone', platform: 'ios' }
+  });
+  assert.equal(tg.statusCode, 200, tg.body);
+  const deniedTg = await h.call('authMigrate', { body: { token: tg.json.token } });
+  assert.equal(deniedTg.statusCode, 403);
+  await h.query("update zh.sessions set kind = 'legacy' where token_hash = zh.hash_token($1)", [access.token]);
+  const moved = await h.call('authMigrate', { body: { token: access.token } });
   assert.equal(moved.statusCode, 200, moved.body);
   assert.ok(h.cookieToken(moved));
-  await assert.rejects(() => h.rpc('zh_me', { p_token: old.token }, { role: 'anon' }), (e) => e.hint === 'expired');
+  await assert.rejects(() => h.rpc('zh_me', { p_token: access.token }, { role: 'anon' }), (e) => e.hint === 'expired');
   const me = await h.rpc('zh_me', { p_token: moved.json.token }, { role: 'anon' });
   assert.equal(me.email, 'egor@example.com');
-  assert.ok(acc.token);
+  const still = await h.rpc('zh_me', { p_token: acc.token }, { role: 'anon' });
+  assert.equal(still.email, 'egor@example.com');
+});
+
+test('переставленный и перекодированный initData — тот же hash, второй вход REPLAY', async () => {
+  await h.register('egor@example.com', 'password-ok');
+  const { signInitData } = require('../srv/lib/telegram');
+  const raw = signInitData({
+    auth_date: String(Math.floor(Date.now() / 1000)),
+    query_id: 'reorder',
+    user: JSON.stringify({ id: 5151, first_name: 'Egor Test', username: 'rundego', language_code: 'ru' }),
+    signature: 'sig value'
+  }, process.env.TG_BOT_TOKEN);
+  const first = await h.call('tgLogin', {
+    body: { initData: raw, email: 'egor@example.com', password: 'password-ok', consent: true, device_id: 'd', platform: 'ios' }
+  });
+  assert.equal(first.statusCode, 200, first.body);
+  const sp = new URLSearchParams(raw);
+  const hash = sp.get('hash');
+  const pairs = [];
+  for (const [k, v] of sp.entries()) if (k !== 'hash') pairs.push([k, v]);
+  pairs.reverse();
+  const reordered = pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&') + '&hash=' + hash;
+  const second = await h.call('tgLogin', {
+    body: { initData: reordered, email: 'egor@example.com', password: 'password-ok', consent: true, device_id: 'd2', platform: 'ios' }
+  });
+  assert.equal(second.statusCode, 401);
+  assert.equal(second.json.error, 'REPLAY');
+  const plus = pairs.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v).replace(/%20/g, '+')).join('&') + '&hash=' + hash;
+  assert.notEqual(plus, reordered);
+  const third = await h.call('tgLogin', {
+    body: { initData: plus, email: 'egor@example.com', password: 'password-ok', consent: true, device_id: 'd3', platform: 'ios' }
+  });
+  assert.equal(third.statusCode, 401);
+  assert.equal(third.json.error, 'REPLAY');
+  const n = await h.query('select count(*)::int as n from zh.tg_links');
+  assert.equal(n[0].n, 1);
+});
+
+test('приглашения только у платформенного админа и только с сайта', async () => {
+  const owner = await h.register('owner@example.com', 'password-ok');
+  const manager = await h.register('manager@example.com', 'password-ok');
+  const user = await h.register('user@example.com', 'password-ok');
+  await h.query("update zh.owners set role = 'manager' where email = 'manager@example.com'");
+  const strangerDenied = await h.call('authRegister', { body: { email: 'stranger@example.com', password: 'password-ok', name: 'Чужой', role: 'owner' } });
+  assert.equal(strangerDenied.statusCode, 400);
+  for (const token of [owner.token, manager.token, user.token]) {
+    const res = await h.call('authInvite', { headers: { authorization: 'Bearer ' + token } });
+    assert.equal(res.statusCode, 403, res.body);
+    assert.equal(res.json.hint, 'forbidden');
+  }
+  const admin = await h.register('admin@example.com', 'password-ok');
+  await h.query('update zh.owners set platform_admin = true where email = $1', ['admin@example.com']);
+  const tg = await h.call('tgLogin', {
+    body: { initData: h.signedInit({ userId: 424242 }), email: 'admin@example.com', password: 'password-ok', consent: true, device_id: 'phone', platform: 'ios' }
+  });
+  assert.equal(tg.statusCode, 200, tg.body);
+  const viaTg = await h.call('authInvite', { headers: { authorization: 'Bearer ' + tg.json.token } });
+  assert.equal(viaTg.statusCode, 403);
+  const withRole = await h.call('authInvite', { headers: { authorization: 'Bearer ' + admin.token }, body: { role: 'manager' } });
+  assert.equal(withRole.statusCode, 400);
+  const issued = await h.call('authInvite', { headers: { authorization: 'Bearer ' + admin.token } });
+  assert.equal(issued.statusCode, 200, issued.body);
+  const row = await h.query('select role from zh.owner_invites where code_hash = zh.hash_token($1)', [issued.json.code]);
+  assert.equal(row[0].role, 'owner');
+  const newbie = await h.call('authRegister', {
+    body: { email: 'newbie@example.com', password: 'password-ok', name: 'Новый', invite: issued.json.code, role: 'admin' }
+  });
+  assert.equal(newbie.statusCode, 400);
+  const joined = await h.call('authRegister', {
+    body: { email: 'newbie@example.com', password: 'password-ok', name: 'Новый', invite: issued.json.code }
+  });
+  assert.equal(joined.statusCode, 200, joined.body);
+  const chain = await h.call('authInvite', { headers: { authorization: 'Bearer ' + joined.json.token } });
+  assert.equal(chain.statusCode, 403, chain.body);
+  const next = await h.call('authRegister', { body: { email: 'next@example.com', password: 'password-ok', name: 'Дальше' } });
+  assert.equal(next.statusCode, 400);
+  const prev = process.env.ADMIN_TELEGRAM_IDS;
+  process.env.ADMIN_TELEGRAM_IDS = '777001';
+  try {
+    const byId = await h.call('authInvite', { headers: { authorization: 'Bearer ' + owner.token } });
+    assert.equal(byId.statusCode, 403);
+    const linked = await h.call('tgLogin', {
+      body: { initData: h.signedInit({ userId: 777001, queryId: 'link-owner' }), email: 'owner@example.com', password: 'password-ok', consent: true, device_id: 'desk', platform: 'tdesktop' }
+    });
+    assert.equal(linked.statusCode, 200, linked.body);
+    const byWeb = await h.call('authInvite', { headers: { authorization: 'Bearer ' + owner.token } });
+    assert.equal(byWeb.statusCode, 200, byWeb.body);
+    const ownerTg = await h.call('tgAuth', { body: { initData: h.signedInit({ userId: 777001, queryId: 'again' }), device_id: 'desk', platform: 'tdesktop' } });
+    assert.equal(ownerTg.statusCode, 200, ownerTg.body);
+    const byTg = await h.call('authInvite', { headers: { authorization: 'Bearer ' + ownerTg.json.token } });
+    assert.equal(byTg.statusCode, 403);
+  } finally {
+    if (prev == null) delete process.env.ADMIN_TELEGRAM_IDS;
+    else process.env.ADMIN_TELEGRAM_IDS = prev;
+  }
+});
+
+test('без device_id сессии одной платформы не вытесняют друг друга', async () => {
+  await h.register('egor@example.com', 'password-ok');
+  const init = () => h.signedInit({ userId: 77 });
+  const first = await h.call('tgLogin', {
+    body: { initData: init(), email: 'egor@example.com', password: 'password-ok', consent: true, platform: 'ios' }
+  });
+  assert.equal(first.statusCode, 200, first.body);
+  const second = await h.call('tgAuth', { body: { initData: init(), platform: 'ios' } });
+  assert.equal(second.statusCode, 200, second.body);
+  const a = await h.rpc('zh_me', { p_token: first.json.token }, { role: 'anon' });
+  const b = await h.rpc('zh_me', { p_token: second.json.token }, { role: 'anon' });
+  assert.equal(a.email, 'egor@example.com');
+  assert.equal(b.email, 'egor@example.com');
 });
 });

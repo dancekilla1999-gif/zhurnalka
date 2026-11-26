@@ -8,6 +8,8 @@
 -- ---------------------------------------------------------------------------
 
 alter table zh.owners add column if not exists disabled_at timestamptz;
+alter table zh.owners add column if not exists platform_admin boolean not null default false;
+alter table zh.owners add column if not exists role text not null default 'owner';
 
 alter table zh.sessions add column if not exists id uuid default gen_random_uuid();
 alter table zh.sessions add column if not exists kind text not null default 'web';
@@ -36,11 +38,14 @@ create index if not exists zh_sessions_refresh_idx on zh.sessions (refresh_hash)
 create index if not exists zh_sessions_chain_idx on zh.sessions (chain_id);
 create index if not exists zh_sessions_tg_device_idx on zh.sessions (tg_user_id, device_key);
 
-do $$ begin
-  if not exists (select 1 from pg_constraint where conname = 'zh_sessions_kind_chk') then
-    alter table zh.sessions add constraint zh_sessions_kind_chk check (kind in ('web', 'tg'));
-  end if;
-end $$;
+alter table zh.sessions drop constraint if exists zh_sessions_kind_chk;
+alter table zh.sessions add constraint zh_sessions_kind_chk check (kind in ('web', 'tg', 'legacy'));
+-- Старые токены сайта без refresh — единственные, которые можно обменять на cookie.
+update zh.sessions
+   set kind = 'legacy'
+ where kind = 'web'
+   and refresh_hash is null
+   and tg_user_id is null;
 
 alter table zh.login_attempts add column if not exists ip_hash text;
 alter table zh.login_attempts add column if not exists kind text not null default 'password';
@@ -109,8 +114,10 @@ create table if not exists zh.owner_invites (
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
   used_at timestamptz,
-  used_by uuid
+  used_by uuid,
+  role text not null default 'owner'
 );
+alter table zh.owner_invites add column if not exists role text not null default 'owner';
 
 create table if not exists zh.subscription (
   owner_id uuid primary key references zh.owners (id) on delete cascade,
@@ -369,6 +376,7 @@ declare
   e text := lower(trim(coalesce(p_email, '')));
   o zh.owners;
   v_hash text;
+  v_role text;
 begin
   if p_secret is null or length(p_secret) < 16 then
     return jsonb_build_object('error', 'forbidden', 'hint', 'auth');
@@ -393,13 +401,13 @@ begin
    where code_hash = zh.hash_token(trim(p_invite))
      and used_at is null
      and expires_at > now()
-  returning code_hash into v_hash;
+  returning code_hash, role into v_hash, v_role;
   if v_hash is null then
     return jsonb_build_object('error', 'Ссылка-приглашение недействительна или уже использована', 'hint', 'invite');
   end if;
   begin
-    insert into zh.owners (email, pass_hash, name)
-    values (e, extensions.crypt(p_password, extensions.gen_salt('bf', 10)), left(trim(coalesce(p_name, '')), 80))
+    insert into zh.owners (email, pass_hash, name, role)
+    values (e, extensions.crypt(p_password, extensions.gen_salt('bf', 10)), left(trim(coalesce(p_name, '')), 80), coalesce(nullif(v_role, ''), 'owner'))
     returning * into o;
     update zh.owner_invites set used_by = o.id where code_hash = v_hash;
   exception when unique_violation then
@@ -419,6 +427,9 @@ begin
   end if;
   v := zh.owner_id(p_token);
   select * into s from zh.sessions where token_hash = zh.hash_token(p_token);
+  if s.kind is distinct from 'legacy' then
+    return jsonb_build_object('error', 'Этот токен нельзя обменять', 'hint', 'forbidden');
+  end if;
   r := zh.issue_web(v, p_ip_hash, coalesce(p_device_label, s.device_label), s.chain_id);
   update zh.sessions
      set revoked_at = now(), revoke_reason = 'rotated', expires_at = least(expires_at, now())
@@ -886,21 +897,73 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+create or replace function zh.issue_owner_invite(p_owner uuid) returns jsonb
+language plpgsql volatile security definer set search_path to pg_catalog as $$
+declare n int; code text := encode(extensions.gen_random_bytes(16), 'hex');
+begin
+  select count(*) into n from zh.owner_invites
+   where created_by = p_owner and created_at > now() - interval '1 day';
+  if n >= 20 then
+    return jsonb_build_object('error', 'Слишком много приглашений, подождите сутки', 'hint', 'rate');
+  end if;
+  insert into zh.owner_invites (code_hash, created_by, expires_at, role)
+  values (zh.hash_token(code), p_owner, now() + interval '7 days', 'owner');
+  return jsonb_build_object('code', code, 'expires_at', now() + interval '7 days', 'role', 'owner');
+end $$;
+
+revoke all on function zh.issue_owner_invite(uuid) from public, anon, authenticated;
+
 create or replace function public.zh_invite_issue(p_token text) returns jsonb
 language plpgsql security definer set search_path to pg_catalog as $$
 declare
   v uuid := zh.owner_id(p_token);
-  n int;
-  code text := encode(extensions.gen_random_bytes(16), 'hex');
+  s zh.sessions;
+  o zh.owners;
 begin
-  select count(*) into n from zh.owner_invites
-   where created_by = v and created_at > now() - interval '1 day';
-  if n >= 20 then
-    return jsonb_build_object('error', 'Слишком много приглашений, подождите сутки', 'hint', 'rate');
+  select * into s from zh.sessions where token_hash = zh.hash_token(p_token);
+  if s.kind is distinct from 'web' then
+    return jsonb_build_object('error', 'Приглашение выдаётся только из сессии сайта', 'hint', 'forbidden');
   end if;
-  insert into zh.owner_invites (code_hash, created_by, expires_at)
-  values (zh.hash_token(code), v, now() + interval '7 days');
-  return jsonb_build_object('code', code, 'expires_at', now() + interval '7 days');
+  select * into o from zh.owners where id = v;
+  if o.platform_admin is not true then
+    return jsonb_build_object('error', 'Приглашения выдаёт только администратор платформы', 'hint', 'forbidden');
+  end if;
+  return zh.issue_owner_invite(v);
+end $$;
+
+create or replace function public.zh_invite_issue_admin(p_token text, p_admin_ids text, p_secret text) returns jsonb
+language plpgsql security definer set search_path to pg_catalog as $$
+declare
+  v uuid;
+  s zh.sessions;
+  o zh.owners;
+  tg bigint;
+  allowed boolean := false;
+  piece text;
+begin
+  if p_secret is null or length(p_secret) < 16 then
+    return jsonb_build_object('error', 'forbidden', 'hint', 'forbidden');
+  end if;
+  v := zh.owner_id(p_token);
+  select * into s from zh.sessions where token_hash = zh.hash_token(p_token);
+  if s.kind is distinct from 'web' then
+    return jsonb_build_object('error', 'Приглашение выдаётся только из сессии сайта', 'hint', 'forbidden');
+  end if;
+  select * into o from zh.owners where id = v;
+  if o.platform_admin then
+    allowed := true;
+  else
+    select l.tg_user_id into tg from zh.tg_links l where l.owner_id = v;
+    if tg is not null then
+      foreach piece in array string_to_array(replace(coalesce(p_admin_ids, ''), ' ', ''), ',') loop
+        if piece <> '' and piece = tg::text then allowed := true; end if;
+      end loop;
+    end if;
+  end if;
+  if not allowed then
+    return jsonb_build_object('error', 'Приглашения выдаёт только администратор платформы', 'hint', 'forbidden');
+  end if;
+  return zh.issue_owner_invite(v);
 end $$;
 
 create or replace function public.zh_auth_note(p_kind text, p_secret text) returns jsonb
@@ -949,6 +1012,7 @@ begin
   execute format('grant execute on function zh.unbind_owner(uuid, text, text) to %I', current_user);
   execute format('grant execute on function zh.attempt_count(text, text, text, bigint, interval) to %I', current_user);
   execute format('grant execute on function zh.wait_minutes(text, text, text, bigint, interval) to %I', current_user);
+  execute format('grant execute on function zh.issue_owner_invite(uuid) to %I', current_user);
   foreach fn in array array[
     'public.zh_tg_session(bigint, text, text, text, text, text, text)',
     'public.zh_tg_link(text, bigint, text, text, text, boolean, text, text, text, text, text)',
@@ -960,7 +1024,8 @@ begin
     'public.zh_migrate(text, text, text, text)',
     'public.zh_rate_allow(text, text, int, int, text)',
     'public.zh_auth_note(text, text)',
-    'public.zh_auth_cleanup(text)'
+    'public.zh_auth_cleanup(text)',
+    'public.zh_invite_issue_admin(text, text, text)'
   ]
   loop
     execute format('revoke all on function %s from public, anon, authenticated', fn);

@@ -43,6 +43,11 @@ function readBody(req) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/tg') {
+    res.statusCode = 302;
+    res.setHeader('Location', '/tg/' + url.search);
+    return res.end();
+  }
   apply(res, url.pathname, rules);
   const device = url.pathname.match(/^\/api\/auth\/devices\/([^/]+)\/end$/);
   if (req.method === 'POST' && device) {

@@ -60,6 +60,7 @@ scripts/tg-setup.js — разовая настройка бота, запуск
 | `PUBLIC_URL` | origin кабинета, без слэша на конце |
 | `TG_SETUP` | `0` по умолчанию. `1` только когда человек запускает `scripts/tg-setup.js` |
 | `TG_ALERT_CHAT_ID` | необязательно, служебный чат для счётчиков 401/429 |
+| `ADMIN_TELEGRAM_IDS` | Telegram id администратора платформы через запятую; приглашения ещё и у `platform_admin` |
 | `CRON_SECRET` | уже используется cron и старым вебхуком |
 | `TEST_DATABASE_URL` | Postgres для тестов |
 | `TG_TEST_BOT_TOKEN` | секрет CI, токен тестового бота |

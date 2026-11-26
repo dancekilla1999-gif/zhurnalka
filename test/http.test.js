@@ -111,6 +111,20 @@ test('вебхук: l_ не вызывает tg_bind, секрет провер�
   }
 });
 
+test('секрет сессии сверяется целиком, слабый ключ grace не принимается, /tg редиректит', () => {
+  const net = require('../srv/lib/net');
+  const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'vercel.json'), 'utf8'));
+  assert.equal(net.secretMatches(process.env.TG_SESSION_SECRET), true);
+  assert.equal(net.secretMatches('x'.repeat(24)), false);
+  assert.equal(net.secretMatches('short'), false);
+  const prev = process.env.REFRESH_GRACE_KEY;
+  process.env.REFRESH_GRACE_KEY = 'short';
+  assert.throws(() => net.encryptGrace({ token: 'a', refresh: 'b' }));
+  process.env.REFRESH_GRACE_KEY = prev;
+  const redirect = (cfg.redirects || []).find((r) => r.source === '/tg' && r.destination === '/tg/');
+  assert.ok(redirect);
+});
+
 test('TG_SETUP по умолчанию ничего не делает', async () => {
   const { spawnSync } = require('node:child_process');
   const r = spawnSync(process.execPath, ['scripts/tg-setup.js'], { encoding: 'utf8', env: Object.assign({}, process.env, { TG_SETUP: '0' }) });

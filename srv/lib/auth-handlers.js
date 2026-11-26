@@ -1,5 +1,5 @@
 // HTTP-обработчики /api/tg/* и /api/auth/*. initData в логи и ответы не попадает.
-const { validateInitData } = require('./telegram');
+const { validateInitData, parseInitData } = require('./telegram');
 const { rpc } = require('./sb');
 const { readBody, send } = require('./common');
 const net = require('./net');
@@ -9,7 +9,14 @@ function secret() {
 }
 
 function serviceRpc(fn, args) {
-  const body = Object.assign({}, args || {}, { p_secret: secret() });
+  const s = secret();
+  if (!net.secretMatches(s)) {
+    const e = new Error('forbidden');
+    e.status = 403;
+    e.hint = 'forbidden';
+    throw e;
+  }
+  const body = Object.assign({}, args || {}, { p_secret: s });
   return rpc(fn, body, { role: 'service' });
 }
 
@@ -28,7 +35,7 @@ function hintStatus(data) {
   const hint = data && data.hint;
   if (hint === 'rate') return 429;
   if (hint === 'consent' || hint === 'invite' || hint === 'invalid' || hint === 'exists') return 400;
-  if (hint === 'disabled') return 403;
+  if (hint === 'disabled' || hint === 'forbidden') return 403;
   if (data && (data.error === 'REPLAY' || hint === 'replay')) return 401;
   return 401;
 }
@@ -65,7 +72,12 @@ async function readInit(req, maxAgeSec) {
     net.authLog({ code: v.error });
     return { body, error: v.error || 'BAD_HASH' };
   }
-  return { body, initData, user: v.user, hash: net.sha256(initData) };
+  const hash = String((parseInitData(initData).hash || '')).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    net.authLog({ code: 'BAD_HASH' });
+    return { body, error: 'BAD_HASH' };
+  }
+  return { body, initData, user: v.user, hash: hash };
 }
 
 function tgArgs(parsed, ip) {
@@ -207,6 +219,9 @@ async function authRegister(req, res) {
   if (!guardOrigin(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
   const body = await readBody(req);
+  if (body && body.role != null && String(body.role) !== '') {
+    return send(res, 400, { error: 'Роль задаёт администратор платформы', hint: 'forbidden' });
+  }
   const data = await serviceRpc('zh_web_register', {
     p_email: body.email,
     p_password: body.password,
@@ -389,8 +404,20 @@ async function authInvite(req, res) {
     if (!net.originOk(req)) return send(res, 403, { error: 'forbidden' });
     return send(res, 405, { error: 'POST only' });
   }
-  const data = await withUser(req, res, 'zh_invite_issue', {});
-  if (!data) return;
+  if (!net.originOk(req)) return send(res, 403, { error: 'forbidden' });
+  const body = await readBody(req);
+  if (body && body.role != null && String(body.role) !== '') {
+    return send(res, 400, { error: 'Роль задаёт администратор платформы', hint: 'forbidden' });
+  }
+  const token = net.bearer(req);
+  if (!token) return send(res, 401, { error: 'Нужно войти', hint: 'auth' });
+  let data;
+  try {
+    data = await serviceRpc('zh_invite_issue_admin', { p_token: token, p_admin_ids: process.env.ADMIN_TELEGRAM_IDS || '' });
+  } catch (e) {
+    return send(res, e.hint === 'disabled' ? 403 : 401, { error: e.hint === 'disabled' ? 'Аккаунт отключён' : 'Нужно войти', hint: e.hint || 'auth' });
+  }
+  if (await sendResult(res, data)) return;
   return send(res, 200, { code: data.code, expires_at: data.expires_at });
 }
 

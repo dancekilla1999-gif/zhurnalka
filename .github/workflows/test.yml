@@ -23,7 +23,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/zhurnalka
       IP_SALT: ci-ip-salt
-      REFRESH_GRACE_KEY: ci-grace-key
+      REFRESH_GRACE_KEY: ci-grace-key-32bytes-minimum
       TG_SESSION_SECRET: ci-session-secret-value
       TG_BOT_TOKEN: 5990001111:AAHtestTokenForUnitTestsOnly00000
       TG_BOT_USERNAME: trio_zhurnalka_bot
@@ -54,7 +54,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/zhurnalka
       IP_SALT: ci-ip-salt
-      REFRESH_GRACE_KEY: ci-grace-key
+      REFRESH_GRACE_KEY: ci-grace-key-32bytes-minimum
       TG_SESSION_SECRET: ci-session-secret-value
       TG_BOT_TOKEN: ${{ secrets.TG_TEST_BOT_TOKEN }}
       TG_BOT_USERNAME: trio_zhurnalka_bot

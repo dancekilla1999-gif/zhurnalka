@@ -23,13 +23,36 @@ function ipHash(ip) {
 }
 
 function deviceKey(platform, deviceId) {
-  return sha256(String(platform || '') + String(deviceId || ''));
+  const id = String(deviceId || '');
+  // Без device_id это не одно устройство: иначе все клиенты платформы вытесняют друг друга.
+  const distinct = id || ('anon:' + crypto.randomBytes(16).toString('hex'));
+  return sha256(String(platform || '') + ':' + distinct);
 }
 
 function graceKey() {
   const raw = process.env.REFRESH_GRACE_KEY || '';
+  if (raw.length < 16) {
+    const e = new Error('REFRESH_GRACE_KEY is too short');
+    e.status = 500;
+    throw e;
+  }
   if (/^[0-9a-fA-F]{64}$/.test(raw)) return Buffer.from(raw, 'hex');
   return crypto.createHash('sha256').update(raw, 'utf8').digest();
+}
+
+function timingEqual(a, b) {
+  const x = Buffer.from(String(a));
+  const y = Buffer.from(String(b));
+  if (x.length !== y.length || x.length === 0) return false;
+  return crypto.timingSafeEqual(x, y);
+}
+
+function secretMatches(value) {
+  const cur = process.env.TG_SESSION_SECRET || '';
+  const prev = process.env.TG_SESSION_SECRET_PREV || '';
+  if (cur.length < 16) return false;
+  if (timingEqual(value, cur)) return true;
+  return prev.length >= 16 && timingEqual(value, prev);
 }
 
 function encryptGrace(obj) {
@@ -137,6 +160,6 @@ function sessionSecret() {
 
 module.exports = {
   CONSENT_VERSION, sha256, newToken, clientIp, ipHash, deviceKey,
-  encryptGrace, decryptGrace, refreshCookie, clearCookie, readCookie, bearer,
+  encryptGrace, decryptGrace, refreshCookie, clearCookie, readCookie, bearer, secretMatches,
   originOk, deviceLabelFromUa, botUsername, linkUrl, authLog, sessionSecret
 };
