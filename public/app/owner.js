@@ -3,16 +3,10 @@
   "use strict";
   var ZJ = window.ZJ, h = ZJ.h;
 
-  // ------------------------------------------------------------ сессия
-  ZJ.owner = function () { try { return JSON.parse(ZJ.store.get("zj_owner") || "null"); } catch (e) { return null; } };
-  function setOwner(o) { ZJ.store.set("zj_owner", o ? JSON.stringify(o) : null); }
-  function tok() { var o = ZJ.owner(); return o && o.token; }
-  function call(fn, args) {
-    return ZJ.api(fn, Object.assign({ p_token: tok() }, args || {})).catch(function (e) {
-      if (e.hint === "auth") { setOwner(null); ZJ.toast(e.message, "bad"); ZJ.go("/login"); }
-      throw e;
-    });
-  }
+  // ------------------------------------------------------------ сессия (токен только в памяти)
+  ZJ.owner = function () { return ZJ.profile ? ZJ.profile() : null; };
+  function tok() { return ZJ.accessToken ? ZJ.accessToken() : null; }
+  function call(fn, args) { return ZJ.authedCall(fn, args); }
   function need() { if (!tok()) { ZJ.go("/login"); return false; } return true; }
   function fail(e) { ZJ.toast(e.message || "Ошибка", "bad"); }
 
@@ -26,8 +20,15 @@
           point ? h("span", { class: "venue-name", text: point.name }) : null),
         h("div", { class: "row" },
           h("span", { class: "small muted", text: o.email || "" }),
+          h("a", { class: "btn ghost small", href: "#/o/account", text: "Аккаунт" }),
           h("button", { class: "btn ghost small", text: "Выйти", onclick: function () {
-            call("zh_logout").catch(function () {}).then(function () { setOwner(null); ZJ.go("/"); });
+            if (ZJ.tg) {
+              ZJ.confirm("Выйти и отвязать Telegram?", "Привязка снимется. В этот Telegram нужно будет войти заново.", "Выйти", function () {
+                ZJ.apiAuth("/api/tg/unbind", {}).then(function () { ZJ.clearAuth(); if (ZJ.tgReset) ZJ.tgReset(); }, function (e) { ZJ.toast(e.message, "bad"); });
+              });
+              return;
+            }
+            ZJ.webLogout();
           } }))),
       point ? h("nav", { class: "wrap tabs", "aria-label": "Разделы" },
         [["today", "Сегодня", ""], ["j", "Журналы", "/j/health"], ["units", "Оборудование", "/units"], ["team", "Команда", "/team"], ["settings", "Настройки", "/settings"]].map(function (t) {
@@ -56,7 +57,7 @@
       h("div", { class: "card form" },
         h("h2", { text: "Я управляющий или владелец" }),
         h("p", { class: "muted small", text: "Заведите точку, добавьте холодильники и пригласите сотрудников." }),
-        h("a", { class: "btn primary wide", href: "#/register", text: "Зарегистрироваться — 7 дней бесплатно" }),
+        h("p", { class: "muted small", text: "Регистрация только по приглашению от владельца." }),
         h("a", { class: "btn wide", href: "#/login", text: "Войти" })),
       h("div", { class: "card form" },
         h("h2", { text: "Я сотрудник" }),
@@ -72,11 +73,12 @@
     var btn = h("button", { class: "btn primary wide", type: "submit", text: mode === "login" ? "Войти" : "Создать аккаунт" });
     var form = h("form", { class: "card form", onsubmit: function (ev) {
       ev.preventDefault(); err.textContent = ""; btn.disabled = true;
-      var p = mode === "login" ? ZJ.api("zh_login", { p_email: email.value, p_password: pass.value })
-        : ZJ.api("zh_register", { p_email: email.value, p_password: pass.value, p_name: name.value });
+      var p = mode === "login"
+        ? ZJ.apiAuth("/api/auth/login", { email: email.value, password: pass.value })
+        : ZJ.apiAuth("/api/auth/register", { email: email.value, password: pass.value, name: name.value, invite: ZJ.pendingInvite });
       p.then(function (r) {
         if (r && r.error) throw new Error(r.error);
-        setOwner(r); ZJ.go(mode === "login" ? "/o" : "/o/new");
+        ZJ.acceptAuth(r); ZJ.go(mode === "login" ? "/o" : "/o/new");
       }).catch(function (e) { err.textContent = e.message; btn.disabled = false; });
     } },
       h("h1", { text: mode === "login" ? "Вход" : "Регистрация" }),
@@ -84,11 +86,22 @@
       h("label", null, "Почта", email),
       h("label", null, "Пароль" + (mode === "register" ? " (от 8 символов)" : ""), pass),
       err, btn,
-      h("p", { class: "small muted center" }, mode === "login" ? h("a", { href: "#/register", text: "Нет аккаунта? Регистрация" }) : h("a", { href: "#/login", text: "Уже есть аккаунт? Войти" })));
+      h("p", { class: "small muted center" }, mode === "login" ? h("span", { text: "Нет аккаунта? Нужна ссылка-приглашение." }) : h("a", { href: "#/login", text: "Уже есть аккаунт? Войти" })));
     ZJ.mount(h("main", { class: "page narrow" }, h("a", { class: "brand big", href: "#/", text: "Журналка" }), form));
   }
   ZJ.route("/login", function () { authPage("login"); });
-  ZJ.route("/register", function () { authPage("register"); });
+  ZJ.route("/register", function () {
+    if (!ZJ.pendingInvite) {
+      ZJ.mount(h("main", { class: "page narrow" },
+        h("a", { class: "brand big", href: "#/", text: "Журналка" }),
+        h("div", { class: "card form" },
+          h("h1", { text: "Регистрация по приглашению" }),
+          h("p", { text: "Публичной регистрации нет. Откройте ссылку, которую прислал владелец." }),
+          h("a", { class: "btn", href: "#/login", text: "У меня уже есть аккаунт" }))));
+      return;
+    }
+    authPage("register");
+  });
 
   // ------------------------------------------------------------ точки
   ZJ.route("/o", function () {
@@ -249,7 +262,9 @@
           h("div", { class: "row" },
             h("select", { class: "venue-select", "aria-label": "Месяц", onchange: function (ev) { ZJ.go("/o/p/" + p.id + "/j/" + k + "/" + ev.target.value); } },
               months.map(function (m) { return h("option", { value: m, text: ZJ.monthName(m), selected: m === ym ? true : null }); })),
-            h("a", { class: "btn primary", href: "#/o/p/" + p.id + "/print/" + k + "/" + ym, text: "Печать / PDF" }))),
+            ZJ.tg
+              ? h("button", { class: "btn primary", type: "button", text: "Печать", onclick: function () { ZJ.openExternal(location.origin + "/app/#/o/p/" + p.id + "/print/" + k + "/" + ym); } })
+              : h("a", { class: "btn primary", href: "#/o/p/" + p.id + "/print/" + k + "/" + ym, text: "Печать / PDF" }))),
         h("div", { class: "seg", role: "tablist" }, ZJ.J_ORDER.filter(function (x) { return p.journals.indexOf(x) >= 0; }).map(function (x) {
           return h("button", { class: x === k ? "on" : null, onclick: function () { ZJ.go("/o/p/" + p.id + "/j/" + x + "/" + ym); }, text: ZJ.J[x].short });
         })),
@@ -281,7 +296,10 @@
       ZJ.mount([topbar(p, "j"), page(
         h("div", { class: "print-bar" },
           h("a", { class: "btn ghost", href: "#/o/p/" + p.id + "/j/" + prm.journal + "/" + prm.ym, text: "← Назад" }),
-          h("button", { class: "btn primary", text: "Печать или сохранить в PDF", onclick: function () { window.print(); } }),
+          h("button", { class: "btn primary", text: "Печать или сохранить в PDF", onclick: function () {
+            if (ZJ.tg) { ZJ.openExternal(location.origin + "/app/" + location.hash); return; }
+            window.print();
+          } }),
           h("span", { class: "small muted", text: "В окне печати выберите «Сохранить как PDF», ориентация — альбомная." })),
         ZJ.renderDoc(prm.journal, res[1], prm.ym))]);
     }, function (e) { ZJ.fatal(e); });
@@ -342,7 +360,10 @@
       return page(
         h("div", { class: "print-bar" },
           h("a", { class: "btn ghost", href: "#/o/p/" + p.id + "/units", text: "← Назад" }),
-          h("button", { class: "btn primary", text: "Печать", onclick: function () { window.print(); } }),
+          h("button", { class: "btn primary", text: "Печать", onclick: function () {
+            if (ZJ.tg) { ZJ.openExternal(location.origin + "/app/" + location.hash); return; }
+            window.print();
+          } }),
           h("span", { class: "small muted", text: "Вырежьте и приклейте на дверцу. Сотрудник сканирует камерой телефона и сразу вводит температуру." })),
         h("div", { class: "stickers" }, list.map(function (u) {
           return h("div", { class: "sticker" }, h("small", { text: "Журналка · " + p.name }), h("span", { class: "qr" }, ZJ.qrSvg(ZJ.appUrl("/u/" + u.qr), 150)),
@@ -409,7 +430,10 @@
       var link = ZJ.appUrl("/join/" + p.invite_code);
       return page(h("div", { class: "print-bar" },
         h("a", { class: "btn ghost", href: "#/o/p/" + p.id + "/team", text: "← Назад" }),
-        h("button", { class: "btn primary", text: "Печать", onclick: function () { window.print(); } })),
+        h("button", { class: "btn primary", text: "Печать", onclick: function () {
+          if (ZJ.tg) { ZJ.openExternal(location.origin + "/app/" + location.hash); return; }
+          window.print();
+        } })),
         h("div", { class: "poster" }, h("h1", { text: "Санитарные журналы — в телефоне" }),
           h("p", { text: "Отсканируйте камерой телефона, введите фамилию и имя. Каждую смену отмечайтесь здесь — бумажные журналы больше не нужны." }),
           h("span", { class: "qr" }, ZJ.qrSvg(link, 260)),
@@ -437,8 +461,9 @@
           h("label", null, "Название", name), h("label", null, "Адрес", addr), h("label", null, "Юрлицо или ИП (для шапки журналов)", org),
           h("fieldset", null, h("legend", { text: "Какие журналы ведём" }), checks),
           h("button", { class: "btn primary", type: "submit", text: "Сохранить" })),
-        h("div", { class: "card form", style: "max-width:680px" }, h("h2", { text: "Тариф" }),
-          h("p", { class: "muted small", text: "Сейчас пробный период — все функции открыты. Тарифы: «Точка» 1 990 ₽/мес (до 15 сотрудников), «Кухня» 2 990 ₽/мес (до 40 сотрудников и печать всех журналов), «Сеть» 4 990 ₽/мес (до 3 точек). Для подключения оплаты напишите нам." })),
+        h("div", { class: "card form tariff-status", style: "max-width:680px" }, h("h2", { text: "Тариф" }),
+          h("p", { class: "tariff-line", text: window.ZJLogic.tariffText(ZJ.mePlan || { name: "Журналка", active: true }) }),
+          h("p", null, h("a", { href: "#/o/account", text: "Аккаунт, устройства и Telegram" }))),
         h("div", { class: "card form", style: "max-width:680px" }, h("h2", { text: "Закрыть точку" }),
           h("p", { class: "muted small", text: "Сотрудники потеряют доступ. Записи журналов сохранятся." }),
           h("button", { class: "btn danger", text: "Закрыть точку", onclick: function () {

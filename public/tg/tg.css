@@ -1,0 +1,44 @@
+/* Mini App: тема Telegram поверх trio-skin, безопасные поля, без горизонтального скролла страницы. */
+html[data-tg="1"] { overflow-x: hidden; }
+html[data-tg="1"] body {
+  min-height: var(--tg-viewport-stable-height, 100dvh);
+  padding-top: var(--tg-content-safe-area-inset-top, env(safe-area-inset-top, 0px));
+  padding-bottom: var(--tg-content-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+html[data-tg="1"] .wrap {
+  padding-left: max(16px, var(--tg-content-safe-area-inset-left, env(safe-area-inset-left, 0px)));
+  padding-right: max(16px, var(--tg-content-safe-area-inset-right, env(safe-area-inset-right, 0px)));
+}
+html[data-tg="1"] .table-box { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+html[data-tg="1"] .table { width: 100%; border-collapse: collapse; }
+html[data-tg="1"] .table th, html[data-tg="1"] .table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+html[data-tg="1"][data-theme="light"] {
+  --bg: var(--tg-bg, #f3f6f8);
+  --surface: var(--tg-surface, #ffffff);
+  --ink: var(--tg-ink, #13233a);
+  --muted: var(--tg-muted, #55657a);
+  --line: var(--tg-line, #d2dae3);
+  --accent: var(--tg-accent, #0b7a68);
+  --accent-strong: var(--tg-accent, #08604f);
+  color-scheme: light;
+}
+html[data-tg="1"][data-theme="light"] body,
+html[data-tg="1"][data-theme="light"] .topbar {
+  background: var(--bg);
+  color: var(--ink);
+}
+html[data-tg="1"][data-theme="light"] .card,
+html[data-tg="1"][data-theme="light"] .modal {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: none;
+}
+html[data-tg="1"][data-theme="light"] .btn.primary {
+  background: var(--ink);
+  color: var(--bg);
+  box-shadow: none;
+}
+html[data-tg="1"][data-theme="dark"] { color-scheme: dark; }
+.net-banner { position: fixed; left: 50%; top: max(8px, var(--tg-content-safe-area-inset-top, 0px)); transform: translateX(-50%);
+  background: var(--warn-bg, #2c2612); color: var(--ink); border: 1px solid var(--warn-line, #5e4f1e);
+  border-radius: 999px; padding: 8px 14px; z-index: 70; }

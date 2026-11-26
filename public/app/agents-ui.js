@@ -101,7 +101,10 @@
     var extra = cfg.detail && cfg.detail[a.id] ? cfg.detail[a.id](i, h) : null;
     return h("div", { class: "ag" },
       h("div", { class: "page-head" }, h("div", null, h("span", { class: "label", text: a.ico + " Агент «" + a.name + "»" }), h("h1", { text: i.title }), h("p", { class: "small muted", text: a.role + " · обновлено " + ago(i.created_at) })),
-        h("div", { class: "ag-row no-print" }, h("a", { class: "btn ghost small", href: cfg.href(), text: "← Все агенты" }), h("button", { class: "btn small", text: "Печать / PDF", onclick: function () { window.print(); } }))),
+        h("div", { class: "ag-row no-print" }, h("a", { class: "btn ghost small", href: cfg.href(), text: "← Все агенты" }), h("button", { class: "btn small", text: "Печать / PDF", onclick: function () {
+          if (window.ZJ && ZJ.tg && ZJ.openExternal) { ZJ.openExternal(location.origin + "/app/" + location.hash); return; }
+          window.print();
+        } }))),
       a.id === cfg.lead ? h("section", { class: "card ag-brief " + lvl(i.level) }, h("div", { class: "ag-text", text: i.text })) : null,
       h("section", { class: "card" }, h("h2", { text: a.id === cfg.lead ? "На чём основан план" : "Выводы" }), items((i.data && (i.data.items || i.data.actions)) || [])),
       extra);

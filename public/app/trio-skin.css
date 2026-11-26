@@ -53,7 +53,7 @@
   .spinner { border-color: rgba(227,178,106,.25) !important; border-top-color: #e3b26a !important; }
   table th { color: var(--muted); }
 
-  /* ---------- тарифы (trio-bill.js) ---------- */
+  /* ---------- тарифы ---------- */
   .tb-plans { display: grid; gap: 10px; margin: 6px 0 4px; }
   .tb-plans legend { font-size: .74rem; letter-spacing: .2em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 8px; padding: 0; }
   .tb-plans fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }

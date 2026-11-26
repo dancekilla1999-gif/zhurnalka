@@ -10,17 +10,39 @@ const HELP = 'Я — шеф-контроль «Журналки». Каждое 
 const CMD = { '/today': 'sanitary', '/med': 'medbook', '/check': 'inspection', '/fridge': 'equipment', '/plan': 'chef' };
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
+function openMarkup(base) {
+  const url = String(base || '').replace(/\/+$/, '') + '/tg/';
+  return { inline_keyboard: [[{ text: 'Открыть кабинет', web_app: { url } }]] };
+}
+
+// /start <18 hex> — по-прежнему только привязка чата отчётов. l_<код> кабинет не привязывает.
+function routeUpdate(text) {
+  const t = String(text || '').trim();
+  const hex = t.match(/^\/start(?:@\w+)?\s+([a-f0-9]{18})$/i);
+  if (hex) return { kind: 'bind', code: hex[1].toLowerCase() };
+  if (/^\/start(?:@\w+)?(?:\s+l_[A-Za-z0-9_-]+)?\s*$/i.test(t)) return { kind: 'app' };
+  const cmd = t.split(/[\s@]/)[0].toLowerCase();
+  if (cmd === '/app' || cmd === '/help') return { kind: 'app' };
+  return { kind: 'other', cmd };
+}
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
-  const got = String(req.headers['x-telegram-bot-api-secret-token'] || ''), want = hookSecret();
-  if (!process.env.CRON_SECRET || got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return send(res, 401, { error: 'unauthorized' });
+  const got = String(req.headers['x-telegram-bot-api-secret-token'] || '');
+  const secrets = [process.env.TELEGRAM_WEBHOOK_SECRET, process.env.CRON_SECRET ? hookSecret() : ''].filter(Boolean);
+  const ok = secrets.some((want) => got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want)));
+  if (!ok) return send(res, 401, { error: 'unauthorized' });
   const m = (await readBody(req)).message;
   if (!m || !m.chat) return send(res, 200, { ok: true });
   const text = String(m.text || '').trim(), secret = process.env.CRON_SECRET;
-  const code = (text.match(/^\/start\s+([a-f0-9]{18})$/i) || [])[1];
-  if (code) {
-    const r = await rpc('zh_agent_sys', { p_secret: secret, p_owner: null, p_op: 'tg_bind', p_args: { code: code.toLowerCase(), chat: m.chat.id, title: m.chat.title || [m.chat.first_name, m.chat.last_name].filter(Boolean).join(' ') } }).catch(() => ({ ok: false }));
-    await tgSend(m.chat.id, r.ok ? '✅ Готово! Чат подключён к «Журналке».\n\n' + HELP : 'Код не подошёл или устарел. Нажмите «Подключить Telegram» в кабинете ещё раз.');
+  const routed = routeUpdate(text);
+  if (routed.kind === 'bind') {
+    const r = await rpc('zh_agent_sys', { p_secret: secret, p_owner: null, p_op: 'tg_bind', p_args: { code: routed.code, chat: m.chat.id, title: m.chat.title || [m.chat.first_name, m.chat.last_name].filter(Boolean).join(' ') } }).catch(() => ({ ok: false }));
+    await tgSend(m.chat.id, r.ok ? '✅ Готово! Чат подключён к «Журналке».\n\n' + HELP : 'Код не подошёл или устарел. Нажмите «Подключить Telegram» в кабинете ещё раз.', { reply_markup: openMarkup(publicUrl(req)) });
+    return send(res, 200, { ok: true });
+  }
+  if (routed.kind === 'app') {
+    await tgSend(m.chat.id, 'Кабинет «Журналки» открывается кнопкой ниже.\n\n' + HELP, { reply_markup: openMarkup(publicUrl(req)) });
     return send(res, 200, { ok: true });
   }
   if (!text) return send(res, 200, { ok: true });
@@ -46,3 +68,6 @@ module.exports = async function handler(req, res) {
   } catch (e) { await tgSend(m.chat.id, 'Не получилось ответить: ' + esc(String(e.message).slice(0, 200))); }
   return send(res, 200, { ok: true });
 };
+
+module.exports.routeUpdate = routeUpdate;
+module.exports.openMarkup = openMarkup;
